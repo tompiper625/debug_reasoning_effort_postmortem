@@ -54,7 +54,26 @@
 
 还有一个容易产生的误会需要澄清：Kimi 文档说"默认就是 max"，那客户端忽略了我的变量、服务器按默认走，我是不是歪打正着一直在用 max？**不是。** 这条链路上有**两个"默认"**：Kimi 的 max 默认只在请求里*完全没有* effort 字段时才生效，而 Claude Code 每次都显式发送 `output_config.effort`（不设官方变量时默认 `high`）——字段从不缺席，服务端的 max 默认永远没有触发的机会。我的 `REASONING_EFFORT` 对请求体的影响是零，客户端的默认行为却是覆盖性的，所以我实际用的一直是 **high 档**。打个比方：餐厅规定"客人不点菜就默认上招牌菜"，但服务员每次都主动替你点了"中辣"——你永远吃不到那道招牌菜。
 
-最后诚实划分一下抓包的能力边界：它能证明"客户端发了什么"——想发 max 实际发了 high，这是铁证；但证明不了"Kimi 收到 high 之后内部映射到多大的推理预算"，那是服务端的黑盒，只能靠端到端对比实验回答：同一道题分别发 high / max，对比 thinking 长度与回答质量。
+最后诚实划分一下抓包的能力边界：它能证明"客户端发了什么"——想发 max 实际发了 high，这是铁证；但证明不了"Kimi 收到 high 之后内部映射到多大的推理预算"，那是服务端的黑盒，只能靠端到端对比实验回答。这个实验我补做了，结果如下。
+
+### 端到端验证：服务端真的区别对待 high 和 max 吗
+
+抓包回答不了的问题，直接问服务端。我用同一道数学证明题（快乐数问题：证明任意正整数反复迭代"各位数字平方和"函数，要么最终到达 1，要么进入循环，并找出所有可能的循环、证明不存在其他循环），在同一端点上各发一次，唯一变量是 `output_config.effort`（脚本：[effort_compare.py](effort_compare.py)，流式请求，自动记录 thinking 长度、usage、耗时）：
+
+| effort | thinking tokens | 总输出 tokens | 耗时 | stop_reason | 答案质量 |
+|---|---|---|---|---|---|
+| high | 21,998 | 23,965 | 806s | end_turn（自然结束） | 正确完整：找到不动点 1 和唯一的 8 循环并证明唯一性 |
+| max | 24,556 | 26,067 | 885s | end_turn（自然结束） | 同上，同样正确完整 |
+
+两次都没有触顶 `max_tokens`（stop_reason 均为自然结束），thinking 量是模型"想完了自己停"的结果，可比。完整指标见 [evidence/effort_compare_summary.json](evidence/effort_compare_summary.json)。
+
+三个结论：
+
+- **服务端确实消费了 effort 字段。** max 的 thinking 预算比 high 多约 12%，耗时多约 10%——两档在服务端是有真实区别的，不是同一个行为换了个名字。
+- **但差距是"一成多"，不是数量级。** high 档的默认预算已经很足：这道题想了 2.2 万 tokens，证明完整正确。所以我之前"以为开着 max、实际用着 high"，损失的是最后一成预算，而不是从满血掉到残血。
+- **单次实验有噪声。** 12% 的差距要严格钉死，需要多跑几轮、多换几道题。但配合抓包证据，定性结论已经足够：字段被服务端识别，并按档位区别对待。
+
+到这里证据链才算完整：**抓包证明了"客户端发了什么"，端到端实验证明了"服务端拿到之后做了什么"**——前者定位了 bug（变量名写错了），后者量化了 bug 的实际损失（少了一成推理预算，而非全部）。
 
 ## 三、引发的思考复盘（重点）
 
@@ -100,10 +119,12 @@ Claude Code 在自动模式下，每次执行 Bash/Write/Edit 前都要过一道
 ## 仓库内容
 
 ```
-├── dump_proxy.py              # 本地请求转储代理（MITM 抓包脚本）
+├── dump_proxy.py                    # 本地请求转储代理（MITM 抓包脚本）
+├── effort_compare.py                # high vs max 端到端对比实验脚本
 ├── evidence/
-│   └── request_dump.jsonl     # 三条对照实验的抓包记录
-└── README.md                  # 本文
+│   ├── request_dump.jsonl           # 三条对照实验的抓包记录
+│   └── effort_compare_summary.json  # 端到端对比实验的指标汇总
+└── README.md                        # 本文
 ```
 
 ## 复现方法
@@ -116,4 +137,12 @@ python dump_proxy.py 8399 request_dump.jsonl
 #    注意：settings.json 的 env 块优先级高于 shell 前置变量，要在配置文件里改
 
 # 3. 发一条消息，查看 request_dump.jsonl 里的 effort_related 字段
+```
+
+端到端对比实验（验证服务端是否按档位区别对待）：
+
+```bash
+python effort_compare.py                # 用内置的证明题，token 自动从 ~/.claude/settings.json 读取
+python effort_compare.py "你自己的题目"  # 自定义题目
+# 结果写入脚本旁的 effort_high_response.json / effort_max_response.json
 ```

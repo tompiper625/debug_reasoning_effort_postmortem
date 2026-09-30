@@ -1,0 +1,41 @@
+{
+  "experiment": "端到端对比：同一道数学证明题、同一端点、仅 output_config.effort 不同，流式各发一次",
+  "date": "2026-09-30",
+  "endpoint": "https://api.moonshot.cn/anthropic/v1/messages",
+  "model": "kimi-k3",
+  "prompt": "设 f(n) 为将正整数 n 的各位数字平方求和得到的数。从任意正整数出发反复迭代 f。请证明：该序列要么最终到达 1，要么进入循环；若是后者，找出所有可能的循环，并证明不存在其他循环。",
+  "common_params": {
+    "max_tokens": 32000,
+    "stream": true,
+    "thinking": {"type": "adaptive"}
+  },
+  "results": [
+    {
+      "effort": "high",
+      "http": 200,
+      "seconds": 805.9,
+      "stop_reason": "end_turn",
+      "input_tokens": 144,
+      "output_tokens": 23965,
+      "thinking_tokens": 21998,
+      "answer_verdict": "正确完整：证明任意轨道到达 1 或进入循环，找出唯一的非平凡循环 4→16→37→58→89→145→42→20→4（长度 8）并证明不存在其他循环"
+    },
+    {
+      "effort": "max",
+      "http": 200,
+      "seconds": 885.3,
+      "stop_reason": "end_turn",
+      "input_tokens": 143,
+      "output_tokens": 26067,
+      "thinking_tokens": 24556,
+      "answer_verdict": "同上，同样正确完整"
+    }
+  ],
+  "thinking_ratio_max_over_high": 1.12,
+  "conclusions": [
+    "服务端确实消费了 effort 字段：max 的 thinking 预算比 high 多约 12%，耗时多约 10%，两档有真实区别",
+    "但差距是'一成多'而非数量级：high 档默认预算已足以完整解出此题（2.2 万 thinking tokens）",
+    "两次均未触顶 max_tokens（stop_reason 都是 end_turn），thinking 量是模型自然停止的结果，可比"
+  ],
+  "caveats": "单次单题实验，存在噪声；严格结论需多轮多题。完整响应（thinking/answer 全文）未收入仓库，可用仓库根目录的 effort_compare.py 复现"
+}
